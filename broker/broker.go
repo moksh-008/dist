@@ -10,6 +10,11 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
+// WorkerClient represents a connection to a worker.
+type WorkerClient struct {
+	client *rpc.Client
+}
+
 // Broker manages communication between the Local Controller and the workers.
 type Broker struct {
 	mu      sync.Mutex
@@ -47,7 +52,7 @@ func (b *Broker) MergeSlices(slices [][][]byte) [][]byte {
 }
 
 // RegisterWorker adds a new worker to the Broker's pool.
-func (b *Broker) RegisterWorker(workerAddress string) (err error) {
+func (b *Broker) RegisterWorker(workerAddress string) error {
 	client, err := rpc.Dial("tcp", workerAddress)
 	if err != nil {
 		return fmt.Errorf("failed to connect to worker: %v", err)
@@ -55,11 +60,11 @@ func (b *Broker) RegisterWorker(workerAddress string) (err error) {
 	b.mu.Lock()
 	b.workers = append(b.workers, &WorkerClient{client: client})
 	b.mu.Unlock()
-	return
+	return nil
 }
 
 // GOL handles the Game of Life simulation request from the Local Controller.
-func (b *Broker) GOL(req stubs.Request, res *stubs.Response) (err error) {
+func (b *Broker) GOL(req stubs.Request, res *stubs.Response) error {
 	b.mu.Lock()
 	b.world = req.InitialWorld
 	b.turns = req.Turns
@@ -108,27 +113,26 @@ func (b *Broker) GOL(req stubs.Request, res *stubs.Response) (err error) {
 	b.mu.Lock()
 	res.FinalWorld = b.world
 	res.CompletedTurns = b.turns
-
-	// Use findAliveCells to get the alive cell coordinates
 	res.AliveCellsAfterFinalState = findAliveCells(b.world)
 	b.mu.Unlock()
-	return
+	return nil
 }
 
 // Alive handles alive cell count requests from the distributor.
-func (b *Broker) Alive(req stubs.AliveRequest, res *stubs.AliveResponse) (err error) {
+func (b *Broker) Alive(req stubs.AliveRequest, res *stubs.AliveResponse) error {
 	b.mu.Lock()
 	res.Turn = b.turns
 	res.AliveCellsCount = countAliveCells(b.world)
 	b.mu.Unlock()
-	return
+	return nil
 }
 
+// Helper function to count alive cells.
 func countAliveCells(world [][]byte) int {
 	count := 0
 	for _, row := range world {
 		for _, cell := range row {
-			if cell == 255 { // Alive cells are represented as 255
+			if cell == 255 {
 				count++
 			}
 		}
@@ -137,12 +141,11 @@ func countAliveCells(world [][]byte) int {
 }
 
 // Helper function to find alive cell coordinates.
-
 func findAliveCells(world [][]byte) []util.Cell {
 	aliveCells := []util.Cell{}
 	for y, row := range world {
 		for x, cell := range row {
-			if cell == 255 { // Alive cells are represented as 255
+			if cell == 255 {
 				aliveCells = append(aliveCells, util.Cell{X: x, Y: y})
 			}
 		}

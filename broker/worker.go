@@ -8,11 +8,6 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
-// WorkerClient represents a connection to a worker.
-type WorkerClient struct {
-	client *rpc.Client
-}
-
 // ProcessSlice processes the slice of the world for a worker.
 func (w *WorkerClient) ProcessSlice(slice [][]byte, width, height int) ([]util.Cell, error) {
 	// Process the slice and return alive cell coordinates
