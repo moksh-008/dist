@@ -43,7 +43,7 @@ func distributor(p Params, c distributorChannels) {
 	c.events <- StateChange{turn, Executing}
 
 	// Connect to the Broker
-	client, err := rpc.Dial("tcp", "BROKER_IP:BROKER_PORT")
+	client, err := rpc.Dial("tcp", "34.228.70.171:8030") // Ensure the correct broker IP and port
 	if err != nil {
 		fmt.Println("Error connecting to Broker:", err)
 		return
@@ -64,6 +64,7 @@ func distributor(p Params, c distributorChannels) {
 
 	done := make(chan bool)
 
+	// Goroutine to fetch and report alive cells at periodic intervals
 	go func() {
 		for {
 			select {
@@ -84,6 +85,7 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}()
 
+	// Goroutine to handle keypress events and perform appropriate actions
 	go func() {
 		for {
 			select {
@@ -115,22 +117,26 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}()
 
-	// Start the simulation
+	// Start the simulation and make the initial call to the broker
 	response := new(stubs.Response)
-	err = client.Call(stubs.ServerHandler, request, response)
+	err = client.Call("Broker.GOL", request, response)
 	if err != nil {
 		fmt.Println("Error in GOL RPC call:", err)
 		return
 	}
 
+	// Report completion of the final turn
 	c.events <- FinalTurnComplete{
 		CompletedTurns: response.CompletedTurns,
 		Alive:          response.AliveCellsAfterFinalState,
 	}
+
+	// Output the final world state to a PGM file
 	outputPGM(p, c, response.FinalWorld, response.CompletedTurns)
 	done <- true
 }
 
+// Function to save the world state as a PGM image
 func savePGMImage(c distributorChannels, w [][]byte, file string, imageHeight, imageWidth int) {
 	c.ioCommand <- ioOutput
 	c.ioFilename <- file
@@ -140,6 +146,8 @@ func savePGMImage(c distributorChannels, w [][]byte, file string, imageHeight, i
 		}
 	}
 }
+
+// Function to output the final world state as a PGM file
 func outputPGM(p Params, c distributorChannels, world [][]byte, turn int) {
 	// Construct the output filename
 	filename := fmt.Sprintf("%dx%d-%d", p.ImageWidth, p.ImageHeight, turn)

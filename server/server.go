@@ -1,4 +1,3 @@
-// server.go
 package main
 
 import (
@@ -23,7 +22,6 @@ type GameOfLifeOperations struct{}
 
 // GOL forwards the simulation request to the Broker
 func (s *GameOfLifeOperations) GOL(req stubs.Request, res *stubs.Response) (err error) {
-
 	brokerReq := stubs.Request{
 		InitialWorld: req.InitialWorld,
 		ImageHeight:  req.ImageHeight,
@@ -97,11 +95,14 @@ func main() {
 
 	// Start the RPC server
 	rpc.Register(&GameOfLifeOperations{})
+	log.Println("GameOfLifeOperations registered with RPC server.")
+
 	listener, err := net.Listen("tcp", ":"+*pAddr)
 	if err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 	defer listener.Close()
+
 	fmt.Printf("Server started on port %s, connected to Broker at %s\n", *pAddr, *brokerAddr)
 	rpc.Accept(listener)
 }
