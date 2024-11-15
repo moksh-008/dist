@@ -135,6 +135,7 @@ func distributor(p Params, c distributorChannels) {
 			}
 		}
 	}()
+
 	// Make the RPC call to the server's Game of Life handler to start the simulation.
 	err = client.Call(stubs.ServerHandler, request, &stubs.Response{})
 	if err != nil {
