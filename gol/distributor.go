@@ -43,7 +43,7 @@ func distributor(p Params, c distributorChannels) {
 	c.events <- StateChange{turn, Executing}
 
 	// Connect to the Game of Life server over RPC.
-	client, err := rpc.Dial("tcp", "34.228.70.171:8030")
+	client, err := rpc.Dial("tcp", "127.0.0.1:8030")
 	if err != nil {
 		fmt.Println("Error connecting to server:", err)
 		return
@@ -135,7 +135,6 @@ func distributor(p Params, c distributorChannels) {
 			}
 		}
 	}()
-
 	// Make the RPC call to the server's Game of Life handler to start the simulation.
 	err = client.Call(stubs.ServerHandler, request, &stubs.Response{})
 	if err != nil {
@@ -164,25 +163,32 @@ func distributor(p Params, c distributorChannels) {
 		Alive:          finalResponse.AliveCellsAfterFinalState,
 	}
 
+	// Output the final world state to a PGM file.
+	outputPGM(p, c, finalResponse.FinalWorld, finalResponse.CompletedTurns)
+
 	// Signal that the simulation is complete.
 	done <- true
-	c.ioCommand <- ioCheckIdle
-	Idle := <-c.ioIdle
-	if Idle == true {
-		outFileName := file + "x" + strconv.Itoa(p.Turns)
-		savePGMImage(c, world, outFileName, p.ImageHeight, p.ImageWidth)
-	}
-
-	c.ioCommand <- ioCheckIdle
-	Idle = <-c.ioIdle
-
-	c.events <- StateChange{turn, Quitting}
-
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
 
 }
 
+// outputPGM saves the final world state to a PGM file.
+func outputPGM(p Params, c distributorChannels, world [][]byte, completedTurns int) {
+	// Output the final state to IO channels
+	c.ioCommand <- ioOutput
+	outputFilename := fmt.Sprintf("%dx%dx%d", p.ImageHeight, p.ImageWidth, p.Turns)
+	c.ioFilename <- outputFilename
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- world[y][x]
+		}
+	}
+
+	// Ensure IO has completed any pending tasks before quitting
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
+	c.events <- StateChange{completedTurns, Quitting}
+	close(c.events)
+}
 func savePGMImage(c distributorChannels, w [][]byte, file string, imageHeight, imageWidth int) {
 	c.ioCommand <- ioOutput
 	c.ioFilename <- file
