@@ -65,10 +65,6 @@ func (s *GameOfLifeOperations) GOL(req stubs.Request, res *stubs.Response) (err 
 		GolTurn = t + 1 // Update the global turn count
 		mu.Unlock()
 
-		// Check for pause condition
-		for Pause == "Pause" {
-			time.Sleep(1 * time.Second)
-		}
 	}
 
 	// Populate the response with the final world state and alive cells after final state
@@ -81,11 +77,6 @@ func (s *GameOfLifeOperations) GOL(req stubs.Request, res *stubs.Response) (err 
 
 // Alive provides the count of currently alive cells and the current turn
 func (s *GameOfLifeOperations) Alive(req stubs.AliveRequest, res *stubs.AliveResponse) (err error) {
-
-	// Wait if the game is paused
-	for Pause == "Pause" {
-		time.Sleep(1 * time.Second)
-	}
 
 	// Calculate the alive cells based on the current world state
 	mu.Lock()
