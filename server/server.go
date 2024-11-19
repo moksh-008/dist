@@ -1,108 +1,210 @@
+// server.go
 package main
 
 import (
 	"flag"
 	"fmt"
-	"log"
+	"math/rand"
 	"net"
 	"net/rpc"
 	"sync"
-
+	"time"
 	"uk.ac.bris.cs/gameoflife/stubs"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 var (
-	mu        sync.Mutex
-	KillChan  = make(chan bool)
-	brokerRPC *rpc.Client // Broker RPC client
+	GolWorld [][]byte
+	GolTurn  int
+	Pause    string = "Continue"
+	Quit     string = "No"
+	Close    string = "No"
+	mu       sync.Mutex
+	KillChan = make(chan bool)
 )
 
-// GameOfLifeOperations struct for server's RPC methods
-type GameOfLifeOperations struct{}
+// Initializes a new empty world of the specified height and width.
+func makeWorld(height int, width int) [][]byte {
+	world := make([][]byte, height)
+	for i := range world {
+		world[i] = make([]byte, width)
+	}
+	return world
+}
 
-// GOL forwards the simulation request to the Broker
+// GameOfLifeOperations struct that serves the RPC methods
+type GameOfLifeOperations struct {
+	isPaused bool
+	Mu       sync.Mutex
+	World    [][]byte
+	Turns    int
+	Quit     bool
+	Paused   bool
+	Workers  []*rpc.Client
+}
+
+// GOL processes the Game of Life evolution for the specified number of turns.
 func (s *GameOfLifeOperations) GOL(req stubs.Request, res *stubs.Response) (err error) {
-	brokerReq := stubs.Request{
-		InitialWorld: req.InitialWorld,
-		ImageHeight:  req.ImageHeight,
-		ImageWidth:   req.ImageWidth,
-		Turns:        req.Turns,
-	}
-	var brokerRes stubs.Response
 
-	// Forward the simulation request to the Broker
-	err = brokerRPC.Call("Broker.HandleSimulation", brokerReq, &brokerRes)
-	if err != nil {
-		return fmt.Errorf("Error in Broker simulation: %w", err)
+	// Initialize the global world and turn state
+	GolWorld = req.InitialWorld
+	height := req.ImageHeight
+	width := req.ImageWidth
+	turns := req.Turns
+
+	// Process each turn, evolving the world state
+	for t := 0; t < turns; t++ {
+		// Check for quit signal
+		if Quit == "Yes" {
+			fmt.Println("Received quit signal. Ending simulation.")
+			break
+		}
+
+		mu.Lock()
+		GolWorld = executeTurn(GolWorld, height, width)
+		GolTurn = t + 1 // Update the global turn count
+		mu.Unlock()
+
+		// Check for pause condition
+		for Pause == "Pause" {
+			time.Sleep(1 * time.Second)
+		}
 	}
-	mu.Lock()
-	// Populate the response
-	res.FinalWorld = brokerRes.FinalWorld
-	res.CompletedTurns = brokerRes.CompletedTurns
-	res.AliveCellsAfterFinalState = brokerRes.AliveCellsAfterFinalState
-	mu.Unlock()
-	return nil
+
+	// Populate the response with the final world state and alive cells after final state
+	res.FinalWorld = GolWorld
+	res.CompletedTurns = GolTurn
+	res.AliveCellsAfterFinalState = findAliveCells(GolWorld)
+
+	return
 }
 
-// Alive forwards the alive cell count request to the Broker
+// Alive provides the count of currently alive cells and the current turn
 func (s *GameOfLifeOperations) Alive(req stubs.AliveRequest, res *stubs.AliveResponse) (err error) {
-	var brokerRes stubs.AliveResponse
 
-	// Forward the alive cell count request to the Broker
-	err = brokerRPC.Call("Broker.GetAliveCells", req, &brokerRes)
-	if err != nil {
-		return fmt.Errorf("Error in Broker alive cell count request: %w", err)
+	// Wait if the game is paused
+	for Pause == "Pause" {
+		time.Sleep(1 * time.Second)
 	}
+
+	// Calculate the alive cells based on the current world state
 	mu.Lock()
-	// Populate the response
-	res.AliveCellsCount = brokerRes.AliveCellsCount
-	res.Turn = brokerRes.Turn
+	res.Turn = GolTurn
+	res.AliveCellsCount = countAliveCells(GolWorld)
 	mu.Unlock()
-	return nil
+	return
 }
 
-// KillServer forwards the kill signal to the Broker
 func (s *GameOfLifeOperations) KillServer(req stubs.KillRequest, res *stubs.KillResponse) (err error) {
-	err = brokerRPC.Call("Broker.KillServer", req, res)
-	if err != nil {
-		return fmt.Errorf("Error in Broker kill server request: %w", err)
+	KillChan <- true
+	return
+}
+
+func (s *GameOfLifeOperations) PressedKey(req stubs.KeyRequest, res *stubs.KeyResponse) (err error) {
+
+	res.Turns = GolTurn
+	res.World = GolWorld
+	switch req.Key {
+	case 'p':
+		if s.Paused == false {
+			s.Paused = true
+		} else {
+			s.Paused = false
+		}
+	case 'q':
+		s.Quit = true
+	case 'k':
+		s.Quit = true
 	}
 	return
 }
 
-// PressedKey forwards keypress handling to the Broker
-func (s *GameOfLifeOperations) PressedKey(req stubs.KeyRequest, res *stubs.KeyResponse) (err error) {
-	err = brokerRPC.Call("Broker.HandleKeyPress", req, res)
-	if err != nil {
-		return fmt.Errorf("Error in Broker key press handling: %w", err)
+// executeTurn performs a single evolution of the Game of Life
+func executeTurn(world [][]byte, height, width int) [][]byte {
+	newWorld := make([][]byte, height)
+	for i := range newWorld {
+		newWorld[i] = make([]byte, width)
 	}
-	return
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			aliveNeighbors := countAliveNeighbors(world, x, y, height, width)
+			currentCell := world[y][x]
+
+			// Apply Game of Life rules
+			if currentCell == 255 {
+				// Cell is currently alive
+				if aliveNeighbors < 2 || aliveNeighbors > 3 {
+					newWorld[y][x] = 0 // Dies
+				} else {
+					newWorld[y][x] = 255 // Stays alive
+				}
+			} else {
+				// Cell is currently dead
+				if aliveNeighbors == 3 {
+					newWorld[y][x] = 255 // Becomes alive
+				} else {
+					newWorld[y][x] = 0 // Stays dead
+				}
+			}
+		}
+	}
+
+	return newWorld
+}
+
+// countAliveNeighbors counts alive neighbors for a cell at (x, y)
+func countAliveNeighbors(world [][]byte, x, y, height, width int) int {
+	liveNeighbors := 0
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
+				continue // Skip the cell itself
+			}
+			neighborY := (y + dy + height) % height
+			neighborX := (x + dx + width) % width
+			if world[neighborY][neighborX] == 255 {
+				liveNeighbors++
+			}
+		}
+	}
+	return liveNeighbors
+}
+
+// countAliveCells counts the number of alive cells in the world
+func countAliveCells(world [][]byte) int {
+	aliveCount := 0
+	for y := 0; y < len(world); y++ {
+		for x := 0; x < len(world[y]); x++ {
+			if world[y][x] == 255 { // Alive cell
+				aliveCount++
+			}
+		}
+	}
+	return aliveCount
+}
+
+// findAliveCells collects the coordinates of all live cells in the world
+func findAliveCells(world [][]byte) []util.Cell {
+	aliveCells := []util.Cell{}
+	for y := 0; y < len(world); y++ {
+		for x := 0; x < len(world[y]); x++ {
+			if world[y][x] == 255 { // Alive cell
+				aliveCells = append(aliveCells, util.Cell{Y: y, X: x})
+			}
+		}
+	}
+	return aliveCells
 }
 
 func main() {
-	// Parse server configuration
+	// Initialize the Game of Life RPC server
 	pAddr := flag.String("port", "8030", "Port to listen on")
-	brokerAddr := flag.String("broker", "localhost:8031", "Broker address")
 	flag.Parse()
-
-	// Connect to the Broker
-	var err error
-	brokerRPC, err = rpc.Dial("tcp", *brokerAddr)
-	if err != nil {
-		log.Fatalf("Failed to connect to Broker: %v", err)
-	}
-	defer brokerRPC.Close()
-
-	// Start the RPC server
+	rand.Seed(time.Now().UnixNano())
 	rpc.Register(&GameOfLifeOperations{})
-	log.Println("GameOfLifeOperations registered with RPC server.")
-
-	listener, err := net.Listen("tcp", ":"+*pAddr)
-	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
+	listener, _ := net.Listen("tcp", ":"+*pAddr)
 	defer listener.Close()
-
-	fmt.Printf("Server started on port %s, connected to Broker at %s\n", *pAddr, *brokerAddr)
+	fmt.Println("Server started on port", *pAddr)
 	rpc.Accept(listener)
 }
